@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-  <!-- GitHub Pages 正式投票介面｜v2.7；修正送票卡住及後端版本檢查 -->
+  <!-- GitHub Pages 正式投票介面｜v2.8；新增管理員投票開關與截止顯示 -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eaf5ff">
@@ -216,6 +216,30 @@
     .health-note[hidden]{display:none!important}
     .health-note button{background:#0757cc;color:#fff;border:0;border-radius:10px;padding:8px 12px;
       font-size:14px;font-weight:850;cursor:pointer}
+    /* v2.8 投票已截止：保留 BIKO 原設計，僅顯示中央提示；開票按鈕仍可操作 */
+    .voting-closed-banner{position:fixed;z-index:9;left:50%;top:51%;transform:translate(-50%,-50%);
+      width:min(510px,calc(100vw - 40px));border-radius:28px;padding:28px 22px 25px;
+      background:linear-gradient(140deg,#fffdf1,#f3f9ff);color:#0644a3;
+      border:5px solid #ffd35d;box-shadow:0 16px 65px #072b7a6e;
+      text-align:center;pointer-events:none;line-height:1.45}
+    .voting-closed-banner[hidden]{display:none!important}
+    .closed-icon{font-size:48px;line-height:1.1;margin-bottom:5px}
+    .voting-closed-banner strong{display:block;font-size:clamp(26px,5vw,39px);font-weight:1000}
+    .voting-closed-banner span{display:block;font-size:clamp(16px,3vw,21px);font-weight:900;margin-top:8px}
+    .voting-closed-banner small{display:block;margin-top:10px;color:#64809c;font-size:14px;font-weight:700}
+    .voting-status-panel{margin-top:18px;border:2px solid #e0eaf8;border-radius:18px;
+      padding:15px;background:#f5f9ff;text-align:center}
+    .voting-status-panel .status-label{display:block;font-size:13px;color:#6382a2;font-weight:800}
+    .voting-status-panel .status-value{display:block;font-size:20px;margin:5px 0 10px;font-weight:1000;color:#b44518}
+    .voting-status-panel .status-value.open{color:#138248}
+    .voting-toggle{display:block;width:100%;border:0;border-radius:15px;padding:14px;
+      background:linear-gradient(120deg,#16884d,#0c6b3c);color:#fff;font-size:18px;font-weight:1000;cursor:pointer}
+    .voting-toggle.is-open{background:linear-gradient(120deg,#e95a3d,#bc282d)}
+    .voting-toggle:disabled{opacity:.6;cursor:wait}
+    @media(max-width:800px), (orientation:portrait){
+      .voting-closed-banner{top:54%;padding:23px 18px;width:calc(100vw - 38px)}
+      .closed-icon{font-size:42px}
+    }
   </style>
 </head>
 <body>
@@ -252,6 +276,12 @@
       <p class="disclaimer">閱讀生命 · 建功心 · Fun 眼看天下 · E-learning</p>
     </main>
   </div>
+  <section id="votingClosedBanner" class="voting-closed-banner" role="status" aria-live="polite" hidden>
+    <div class="closed-icon">🗳️</div>
+    <strong>投票已截止</strong>
+    <span>感謝大家參與 BIKO 命名票選！</span>
+    <small>管理人員仍可使用「開票」查看結果</small>
+  </section>
   <div class="health-note" id="healthNote" role="status" aria-live="polite" hidden>
     <span id="healthMessage">目前無法連線到投票資料庫，請通知老師。</span>
     <button type="button" id="healthRetry">重新檢查連線</button>
@@ -285,6 +315,12 @@
       <div class="results-step" id="adminResultsStep" hidden>
         <div class="admin-icon">🏆</div>
         <h2>BIKO 中文名字開票結果</h2>
+        <div class="voting-status-panel">
+          <span class="status-label">投票開放狀態</span>
+          <strong class="status-value" id="adminVotingState">🔴 已關閉投票</strong>
+          <button type="button" class="voting-toggle" id="adminVotingToggle">▶ 重新開放投票</button>
+          <div class="admin-error" id="adminToggleError" role="alert" aria-live="polite"></div>
+        </div>
         <div class="results-stats"><span>目前總票數</span><strong id="adminTotal">0</strong><span id="adminUpdated">資料更新中…</span></div>
         <div class="results-list" id="adminResultsList" aria-live="polite"></div>
         <div class="results-actions">
@@ -310,7 +346,21 @@
   const dlgNext=document.getElementById('dialogNext');
   const toast=document.getElementById('toast');
   const voteNames=['比寶','活栗寶','皮可','小可','迪可','建功小狸'];
-  let busy=false,pending=null;
+  let busy=false,pending=null,votingOpen=false;
+  const votingClosedBanner=document.getElementById('votingClosedBanner');
+  const desktopGuide=document.querySelector('.desktop-guide');
+  const mobileGuide=document.querySelector('.guide');
+  const originalGuide='請點選你最喜歡的名字・每人一票';
+  function renderVotingAvailability(){
+    // UI 只是提示；真正是否准許寫入永遠由 GAS submitVote 再次判斷。
+    const closed=backendReady&&!votingOpen;
+    votingClosedBanner.hidden=!closed;
+    desktopGuide.textContent=closed?'投票已截止・感謝參與！':originalGuide;
+    mobileGuide.textContent=closed?'投票已截止・感謝參與！':originalGuide;
+    desktopGuide.style.animationPlayState=closed?'paused':'running';
+    mobileGuide.style.animationPlayState=closed?'paused':'running';
+    choices.forEach(b=>{b.disabled=busy||!backendReady||!votingOpen;});
+  }
   if(preview){ const note=document.getElementById('previewNote'); note.textContent='尚未設定 GAS 後端網址：目前不會記票'; note.hidden=false; }
   const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   const makeId=()=> 'biko_'+(window.crypto&&crypto.randomUUID?crypto.randomUUID().replaceAll('-','_'):Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,16));
@@ -345,28 +395,30 @@
   const healthMessage=document.getElementById('healthMessage');
   const healthRetry=document.getElementById('healthRetry');
   let backendReady=false,healthChecking=false;
-  // 確認 GAS 已部署對應 v2.7 後再開放學生投票，避免投出去卻永遠無法確認。
+  // 確認 GAS 已部署對應 v2.8：後端為唯一投票狀態來源。
   async function verifyBackend(){
     if(healthChecking)return;
     healthChecking=true;backendReady=false;
-    choices.forEach(b=>b.disabled=true);
+    renderVotingAvailability();
     healthNote.hidden=true;
     try{
       if(!apiReady)throw new Error('GAS /exec 網址尚未設定。');
       const health=await checkStatus('health','biko_healthcheck_123456',4200);
-      if(!health||health.state!=='ready'||health.version!=='2.7'){
-        throw new Error('GAS 後端尚未更新至 v2.7，請先貼入新的 Code.gs 並重新部署新版本。');
+      if(!health||health.state!=='ready'||health.version!=='2.8'){
+        throw new Error('GAS 後端尚未更新至 v2.8，請先貼入新的 Code.gs 並重新部署新版本。');
       }
       if(!health.sheetReady){
         throw new Error('投票紀錄工作表尚未建立，請老師先在 GAS 執行 setupVotingSheets。');
       }
       backendReady=true;
+      votingOpen=health.votingOpen===true;
       healthNote.hidden=true;
-      if(!busy)choices.forEach(b=>b.disabled=false);
+      renderVotingAvailability();
     }catch(err){
       console.error('BIKO backend health check:',err);
       healthMessage.textContent='⚠️ '+(err.message||'無法連接後端，請通知老師。');
       healthNote.hidden=false;
+      renderVotingAvailability();
     }finally{healthChecking=false;}
   }
   healthRetry.addEventListener('click',verifyBackend);
@@ -390,11 +442,13 @@
       try{
         const remaining=9000-(Date.now()-started);
         if(remaining<200)break;
-        const result=await checkStatus(action==='results'?'results':'vote',requestId,Math.min(2500,remaining));
-        if(result&&result.state==='ok')return action==='results'?result.data:{ok:true};
+        const kind=action==='results'?'results':action==='control'?'admin':'vote';
+        const result=await checkStatus(kind,requestId,Math.min(2500,remaining));
+        if(result&&result.state==='ok')return action==='vote'?{ok:true}:result.data;
+        if(result&&result.state==='closed')throw new Error('VOTING_CLOSED');
         if(result&&result.state==='error')throw new Error(result.message||'後端記錄失敗');
       }catch(err){
-        if(err&&/密碼錯誤|記錄失敗|無法讀取結果/.test(err.message||''))throw err;
+        if(err&&(err.message==='VOTING_CLOSED'||/密碼錯誤|記錄失敗|無法讀取結果|無法變更投票狀態/.test(err.message||'')))throw err;
         lastError=err;
       }
       await pause(340);
@@ -434,7 +488,8 @@
     toast.classList.remove('success');
     busy=false;
     pending=null;
-    choices.forEach(b=>{b.disabled=false;b.classList.remove('dim','chosen');});
+    choices.forEach(b=>{b.classList.remove('dim','chosen');});
+    renderVotingAvailability();
     // 不強迫焦點移到第一個名字，避免下一位操作時畫面突然跳動。
     if(document.activeElement && document.activeElement.blur)document.activeElement.blur();
   }
@@ -462,6 +517,7 @@
   async function choose(btn){
     if(busy)return; // 只在傳送和動畫期間防連點；不是防止下一位投票。
     if(!backendReady){healthNote.hidden=false;return;}
+    if(!votingOpen){renderVotingAvailability();return;}
     const name=btn.dataset.vote;
     const idx=Number(btn.dataset.i);
     if(voteNames[idx]!==name)return;
@@ -479,7 +535,11 @@
       await onVoteSuccess();
     }catch(e){
       console.error('Vote failed:',e);
-      showRetryDialog();
+      if(e && e.message==='VOTING_CLOSED'){
+        busy=false;pending=null;toast.hidden=true;
+        choices.forEach(b=>b.classList.remove('dim','chosen'));
+        votingOpen=false;renderVotingAvailability();
+      }else{showRetryDialog();}
     }
   }
 
@@ -492,25 +552,39 @@
   const adminSubmit=document.getElementById('adminSubmit');
   const adminRefresh=document.getElementById('adminRefresh');
   const adminRefreshError=document.getElementById('adminRefreshError');
+  const adminVotingState=document.getElementById('adminVotingState');
+  const adminVotingToggle=document.getElementById('adminVotingToggle');
+  const adminToggleError=document.getElementById('adminToggleError');
   const adminColors=['#0964e1','#ff6a16','#f6b516','#54a021','#ff7113','#1496e8'];
   let adminSessionPassword='';
   function closeAdmin(){
     adminOverlay.hidden=true;
-    adminPass.value='';adminSessionPassword='';adminError.textContent='';adminRefreshError.textContent='';
+    adminPass.value='';adminSessionPassword='';adminError.textContent='';adminRefreshError.textContent='';adminToggleError.textContent='';
     adminPasswordStep.hidden=false;adminResultsStep.hidden=true;
   }
   function openAdmin(){
     if(busy)return; // 正在投票時不能打斷那張選票的送出
     adminPasswordStep.hidden=false;adminResultsStep.hidden=true;
-    adminError.textContent='';adminRefreshError.textContent='';adminPass.value='';
+    adminError.textContent='';adminRefreshError.textContent='';adminToggleError.textContent='';adminPass.value='';
     adminOverlay.hidden=false;
     adminPass.focus();
   }
   function fetchResults(secret){
     return callBackend('results',{password:secret},makeId());
   }
+  function renderAdminSwitch(){
+    adminVotingState.textContent=votingOpen?'🟢 目前開放投票':'🔴 目前關閉投票';
+    adminVotingState.classList.toggle('open',votingOpen);
+    adminVotingToggle.textContent=votingOpen?'⏸ 關閉投票':'▶ 重新開放投票';
+    adminVotingToggle.classList.toggle('is-open',votingOpen);
+  }
   function populateResults(data){
     if(!data||!Array.isArray(data.results))throw new Error('伺服器回傳的結果格式不正確。');
+    if(typeof data.votingOpen==='boolean'){
+      votingOpen=data.votingOpen;
+      renderVotingAvailability();
+    }
+    renderAdminSwitch();
     document.getElementById('adminTotal').textContent=String(data.total || 0);
     document.getElementById('adminUpdated').textContent='更新時間：'+(data.updatedAt || '剛剛');
     const list=document.getElementById('adminResultsList');
@@ -555,6 +629,28 @@
       adminPass.value='';
     }finally{adminSubmit.disabled=false;adminSubmit.textContent='🔓 確認開票';}
   });
+  adminVotingToggle.addEventListener('click',async()=>{
+    if(!adminSessionPassword||adminVotingToggle.disabled)return;
+    const nextOpen=!votingOpen;
+    const actionText=nextOpen?'重新開放投票':'關閉投票';
+    if(!window.confirm('確定要'+actionText+'嗎？'+(nextOpen?'重新開放後學生就能繼續投票。':'關閉後將停止接收所有新選票。')))return;
+    adminVotingToggle.disabled=true;
+    adminToggleError.textContent='正在儲存投票狀態…';
+    try{
+      const data=await callBackend('control',{password:adminSessionPassword,open:nextOpen},makeId());
+      if(!data||typeof data.votingOpen!=='boolean')throw new Error('投票狀態回傳不正確');
+      votingOpen=data.votingOpen;
+      renderVotingAvailability();
+      renderAdminSwitch();
+      adminToggleError.textContent='✅ 已'+(votingOpen?'重新開放':'關閉')+'投票（後端已確認）';
+    }catch(err){
+      adminToggleError.textContent=(err&&err.message==='VOTING_CLOSED')?'無法確認投票狀態。':
+        (err&&err.message||'無法更新投票狀態，請再試一次。');
+      // 狀態不明時向後端讀取權威狀態，避免畫面顯示與資料庫不同。
+      await verifyBackend();
+      renderAdminSwitch();
+    }finally{adminVotingToggle.disabled=false;}
+  });
   adminRefresh.addEventListener('click',async()=>{
     if(!adminSessionPassword||adminRefresh.disabled)return;
     adminRefresh.disabled=true;adminRefresh.textContent='更新中…';adminRefreshError.textContent='';
@@ -566,6 +662,10 @@
   choices.forEach(btn=>btn.addEventListener('click',()=>choose(btn)));
   choices.forEach(btn=>btn.disabled=true);
   verifyBackend();
+  // 從背景回到投票頁時再讀取開關狀態（不需要高頻輪詢）。
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='visible'&&!busy)verifyBackend();
+  });
   dlgNext.addEventListener('click',async()=>{
     if(!pending)return;
     dlgNext.disabled=true;
@@ -578,7 +678,10 @@
       await onVoteSuccess();
     }catch(e){
       console.error('Vote retry failed:',e);
-      showRetryDialog();
+      if(e&&e.message==='VOTING_CLOSED'){
+        busy=false;pending=null;dialog.hidden=true;toast.hidden=true;
+        votingOpen=false;renderVotingAvailability();
+      }else{showRetryDialog();}
     }
   });
 })();
